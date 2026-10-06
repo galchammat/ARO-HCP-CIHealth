@@ -33,7 +33,7 @@ func TestHandleTrendsPageRendersHTML(t *testing.T) {
 		t.Fatalf("new handler: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/trends?granularity=daily", nil)
+	req := httptest.NewRequest(http.MethodGet, "/trends?mode=all&granularity=daily", nil)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, req)
 
@@ -98,6 +98,46 @@ func TestHandleTrendsPageRollingModeSelectsWindow(t *testing.T) {
 	}
 }
 
+func TestTrendsDefaultWindowControlsAndAPI(t *testing.T) {
+	t.Parallel()
+	fixture := newHandlerFixture(t)
+	handler, err := NewHandler(HandlerOptions{PostgresPool: fixture.pool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, granularity := range []string{"daily", "weekly"} {
+		path := "/trends"
+		if granularity == "weekly" {
+			path += "?granularity=weekly"
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("unexpected status %d: %s", recorder.Code, recorder.Body.String())
+		}
+		for _, snippet := range []string{
+			`time-selector-summary-text">Last 30 days</span>`,
+			`value="` + granularity + `" selected`,
+			`href="/api/trends?days=30&amp;granularity=` + granularity + `&amp;mode=relative"`,
+			`href="/trends">Reset</a>`,
+			`href="/trends?granularity=` + granularity + `&amp;mode=all"`,
+		} {
+			if !strings.Contains(recorder.Body.String(), snippet) {
+				t.Fatalf("missing default-window control %q", snippet)
+			}
+		}
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/trends", nil))
+	var data readmodeltrends.TrendsData
+	if err := json.Unmarshal(recorder.Body.Bytes(), &data); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Code != http.StatusOK || data.Meta.RelativeDays != 30 || data.Meta.Granularity != "daily" {
+		t.Fatalf("API and page defaults must match: %+v", data.Meta)
+	}
+}
+
 func TestHandleAPITrendsReturnsJSON(t *testing.T) {
 	t.Parallel()
 
@@ -121,7 +161,7 @@ func TestHandleAPITrendsReturnsJSON(t *testing.T) {
 		t.Fatalf("new handler: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/trends?env=dev&granularity=daily", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/trends?mode=all&env=dev&granularity=daily", nil)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, req)
 

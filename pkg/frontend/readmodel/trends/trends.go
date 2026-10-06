@@ -36,6 +36,17 @@ type TrendsQuery struct {
 	GeneratedAt                           time.Time
 }
 
+func (query TrendsQuery) WithDefaults() TrendsQuery {
+	if strings.TrimSpace(query.Granularity) == "" {
+		query.Granularity = Daily
+	}
+	if strings.TrimSpace(query.Mode) == "" && strings.TrimSpace(query.StartDate) == "" &&
+		strings.TrimSpace(query.EndDate) == "" && strings.TrimSpace(query.Days) == "" {
+		query.Mode, query.Days = TrendsModeRelative, "30"
+	}
+	return query
+}
+
 type TrendsData struct {
 	Meta         TrendsMeta          `json:"meta"`
 	Environments []EnvironmentTrends `json:"environments"`
@@ -138,6 +149,7 @@ type Bucket struct {
 }
 
 func BuildTrends(ctx context.Context, service StoreOpener, query TrendsQuery) (TrendsData, error) {
+	query = query.WithDefaults()
 	if service == nil {
 		return TrendsData{}, fmt.Errorf("service is required")
 	}
@@ -147,9 +159,6 @@ func BuildTrends(ctx context.Context, service StoreOpener, query TrendsQuery) (T
 		}
 	}
 	granularity := strings.ToLower(strings.TrimSpace(query.Granularity))
-	if granularity == "" {
-		granularity = Weekly
-	}
 	if granularity != Daily && granularity != Weekly {
 		return TrendsData{}, fmt.Errorf("granularity must be daily or weekly")
 	}

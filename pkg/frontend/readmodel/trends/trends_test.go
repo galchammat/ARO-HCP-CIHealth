@@ -79,7 +79,7 @@ func closeTo(t *testing.T, got, want float64) {
 
 func TestWeightedWeeklyComparisonAndDailyToggle(t *testing.T) {
 	rows := append(dailyRows("2026-03-16", 10, 10, 5, 1, 1, 0), dailyRows("2026-03-17", 90, 0, 45, 0, 0, 0)...)
-	weekly := build(t, rows, TrendsQuery{})
+	weekly := build(t, rows, TrendsQuery{Mode: TrendsModeAll, Granularity: Weekly})
 	if weekly.Meta.Granularity != Weekly || len(weekly.Buckets) != 1 {
 		t.Fatalf("unexpected weekly response: %+v", weekly)
 	}
@@ -100,7 +100,7 @@ func TestWeightedWeeklyComparisonAndDailyToggle(t *testing.T) {
 	if len(chart.Series) != 2 || chart.Series[0].Metric != "raw_success_rate" || chart.Series[1].Metric != "filtered_success_rate" {
 		t.Fatalf("missing paired rates: %+v", chart)
 	}
-	daily := build(t, rows, TrendsQuery{Granularity: Daily})
+	daily := build(t, rows, TrendsQuery{Mode: TrendsModeAll, Granularity: Daily})
 	if len(daily.Buckets) != 2 {
 		t.Fatalf("expected daily points: %+v", daily.Buckets)
 	}
@@ -111,9 +111,35 @@ func TestWeightedWeeklyComparisonAndDailyToggle(t *testing.T) {
 	}
 }
 
+func TestTrendsDefaultsToThirtyRelativeDaysAndDaily(t *testing.T) {
+	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	rows := append(dailyRows("2026-09-06", 10, 2, 5, 1, 0, 0), dailyRows("2026-09-07", 10, 2, 5, 1, 0, 0)...)
+	rows = append(rows, dailyRows("2026-10-06", 10, 2, 5, 1, 0, 0)...)
+	data := build(t, rows, TrendsQuery{GeneratedAt: now})
+	if data.Meta.RelativeDays != 30 || data.Meta.Granularity != Daily ||
+		data.Meta.StartDate != "2026-09-07" || data.Meta.EndDate != "2026-10-06" || len(data.Buckets) != 30 {
+		t.Fatalf("unexpected default window: %+v", data.Meta)
+	}
+	if len(data.Meta.Dates) != 2 || data.Buckets[0].Raw.Runs != 10 || !data.Buckets[29].Partial {
+		t.Fatal("default window must include today and exclude data older than 30 UTC calendar days")
+	}
+	weekly := build(t, rows, TrendsQuery{GeneratedAt: now, Granularity: Weekly})
+	if weekly.Meta.RelativeDays != 30 || weekly.Meta.Granularity != Weekly {
+		t.Fatal("an explicit granularity must retain the default relative window")
+	}
+	all := build(t, rows, TrendsQuery{GeneratedAt: now, Mode: TrendsModeAll})
+	if all.Meta.RelativeDays != 0 || len(all.Meta.Dates) != 3 || all.Meta.Granularity != Daily {
+		t.Fatal("explicit all-history selection must not be overridden by the default window")
+	}
+	custom := build(t, rows, TrendsQuery{GeneratedAt: now, StartDate: "2026-09-06", EndDate: "2026-09-07"})
+	if custom.Meta.RelativeDays != 0 || len(custom.Buckets) != 2 || custom.Meta.Granularity != Daily {
+		t.Fatal("explicit date bounds must retain their window with daily as the default granularity")
+	}
+}
+
 func TestContinuousAxisGapsAndPartialWindows(t *testing.T) {
 	rows := append(dailyRows("2026-03-16", 10, 3, 5, 1, 0, 0), dailyRows("2026-03-30", 20, 5, 8, 0, 1, 0)...)
-	data := build(t, rows, TrendsQuery{})
+	data := build(t, rows, TrendsQuery{Mode: TrendsModeAll, Granularity: Weekly})
 	if len(data.Buckets) != 3 || data.Buckets[1].Raw.Defined || data.Buckets[1].Filtered.Defined {
 		t.Fatalf("empty week must be a gap: %+v", data.Buckets)
 	}
@@ -122,15 +148,15 @@ func TestContinuousAxisGapsAndPartialWindows(t *testing.T) {
 		t.Fatal("daily axis must include requested empty dates")
 	}
 	now := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
-	current := build(t, rows, TrendsQuery{Mode: TrendsModeWeekly, GeneratedAt: now})
+	current := build(t, rows, TrendsQuery{Mode: TrendsModeWeekly, Granularity: Weekly, GeneratedAt: now})
 	if !current.Buckets[0].Partial {
 		t.Fatal("current week should be partial")
 	}
-	complete := build(t, rows, TrendsQuery{StartDate: "2026-03-16", EndDate: "2026-03-22"})
+	complete := build(t, rows, TrendsQuery{StartDate: "2026-03-16", EndDate: "2026-03-22", Granularity: Weekly})
 	if complete.Buckets[0].Partial {
 		t.Fatal("completed requested week should not be partial")
 	}
-	clipped := build(t, rows, TrendsQuery{StartDate: "2026-03-17", EndDate: "2026-03-30"})
+	clipped := build(t, rows, TrendsQuery{StartDate: "2026-03-17", EndDate: "2026-03-30", Granularity: Weekly})
 	if len(clipped.Buckets) != 3 || !clipped.Buckets[0].Partial || !clipped.Buckets[2].Partial {
 		t.Fatal("clipped boundary weeks should be partial")
 	}
@@ -146,7 +172,7 @@ func TestUnknownMetricsAreNotSuccess(t *testing.T) {
 					break
 				}
 			}
-			data := build(t, rows, TrendsQuery{})
+			data := build(t, rows, TrendsQuery{Mode: TrendsModeAll})
 			if data.Buckets[0].Filtered.Defined {
 				t.Fatal("missing counts should produce a filtered gap")
 			}
@@ -155,11 +181,11 @@ func TestUnknownMetricsAreNotSuccess(t *testing.T) {
 			}
 		})
 	}
-	invalid := build(t, dailyRows("2026-03-16", 10, 2, 3, 4, 0, 0), TrendsQuery{})
+	invalid := build(t, dailyRows("2026-03-16", 10, 2, 3, 4, 0, 0), TrendsQuery{Mode: TrendsModeAll})
 	if invalid.Buckets[0].Filtered.Defined {
 		t.Fatal("failures > runs must not silently inflate denominator")
 	}
-	zero := build(t, dailyRows("2026-03-16", 10, 2, 0, 0, 0, 0), TrendsQuery{})
+	zero := build(t, dailyRows("2026-03-16", 10, 2, 0, 0, 0, 0), TrendsQuery{Mode: TrendsModeAll})
 	if zero.Buckets[0].Filtered.Defined || zero.Buckets[0].Coverage == nil || *zero.Buckets[0].Coverage != 0 {
 		t.Fatal("zero filtered samples must be a rate gap with zero coverage")
 	}
@@ -193,7 +219,7 @@ func TestDiagnosticRatesUseStageDenominators(t *testing.T) {
 			rows[i].Value = 20
 		}
 	}
-	data := build(t, rows, TrendsQuery{Granularity: Daily})
+	data := build(t, rows, TrendsQuery{Mode: TrendsModeAll, Granularity: Daily})
 	charts := data.Environments[0].Charts
 	if len(charts) != 3 {
 		t.Fatalf("expected comparison plus two diagnostics, got %d", len(charts))
@@ -220,7 +246,7 @@ func TestDiagnosticRatesUseStageDenominators(t *testing.T) {
 
 func TestDiagnosticWeeklyRatesUseSummedCounts(t *testing.T) {
 	rows := append(dailyRows("2026-03-16", 10, 4, 5, 1, 1, 0), dailyRows("2026-03-17", 90, 20, 45, 4, 4, 5)...)
-	data := build(t, rows, TrendsQuery{})
+	data := build(t, rows, TrendsQuery{Mode: TrendsModeAll, Granularity: Weekly})
 	chart := data.Environments[0].Charts[2]
 	for i, want := range []float64{100 * 40.0 / 45, 87.5, 70} {
 		closeTo(t, chart.Series[i].Points[0], want)
@@ -239,7 +265,7 @@ func TestOtherFailureStripsUseDistinctPopulations(t *testing.T) {
 			rows[i].Value = 10
 		}
 	}
-	charts := build(t, rows, TrendsQuery{}).Environments[0].Charts
+	charts := build(t, rows, TrendsQuery{Mode: TrendsModeAll}).Environments[0].Charts
 	if charts[1].Title != "All runs" || charts[2].Title != "Post-good + batches" {
 		t.Fatal("diagnostic titles must identify their populations")
 	}
@@ -266,7 +292,7 @@ func TestDiagnosticMissingLanesPreserveOverall(t *testing.T) {
 			break
 		}
 	}
-	chart := build(t, rows, TrendsQuery{}).Environments[0].Charts[1]
+	chart := build(t, rows, TrendsQuery{Mode: TrendsModeAll}).Environments[0].Charts[1]
 	if chart.Series[0].Defined[0] || chart.Series[1].Defined[0] || chart.Other.Defined[0] || !chart.Series[2].Defined[0] {
 		t.Fatal("unknown lanes must be gaps without losing the independently known overall rate")
 	}
@@ -379,7 +405,7 @@ func TestRelativeWindowsUseUTCDaysIncludingToday(t *testing.T) {
 func TestRelativeWindowKeepsCalendarWeekBuckets(t *testing.T) {
 	rows := append(dailyRows("2026-09-23", 10, 3, 5, 1, 0, 0), dailyRows("2026-10-06", 20, 5, 8, 0, 1, 0)...)
 	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
-	query := TrendsQuery{Mode: TrendsModeRelative, Days: "14", GeneratedAt: now}
+	query := TrendsQuery{Mode: TrendsModeRelative, Days: "14", GeneratedAt: now, Granularity: Weekly}
 	data := build(t, rows, query)
 	if len(data.Buckets) != 3 || data.Buckets[0].StartDate != "2026-09-21" ||
 		!data.Buckets[0].Partial || data.Buckets[1].Partial || !data.Buckets[2].Partial {
@@ -413,7 +439,7 @@ func TestRelativeDaysValidation(t *testing.T) {
 func TestDEVHistoryIgnoresOtherEnvironmentDates(t *testing.T) {
 	rows := append(dailyRows("2026-03-16", 30, 3, 20, 0, 1, 0),
 		storecontracts.MetricDailyRecord{Environment: "int", Date: "2025-01-01", Metric: "run_count", Value: 1})
-	data := build(t, rows, TrendsQuery{})
+	data := build(t, rows, TrendsQuery{Mode: TrendsModeAll})
 	if len(data.Meta.Dates) != 1 || len(data.Buckets) != 1 || data.Buckets[0].StartDate != "2026-03-16" {
 		t.Fatalf("non-DEV data extended axis: %+v", data.Meta)
 	}

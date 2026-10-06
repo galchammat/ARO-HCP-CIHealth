@@ -392,6 +392,7 @@ func (h *handler) generateDayRunHistoryPage(ctx context.Context, query readmodel
 }
 
 func (h *handler) generateTrendsPage(ctx context.Context, query readmodeltrends.TrendsQuery) (string, error) {
+	query = query.WithDefaults()
 	data, err := readmodeltrends.BuildTrends(ctx, h.service, query)
 	if err != nil {
 		return "", err
@@ -422,7 +423,7 @@ func (h *handler) generateTrendsPage(ctx context.Context, query readmodeltrends.
 			},
 			TrendsGranularity: data.Meta.Granularity,
 			JSONAPIHref:       trendsHref("/api/trends", query.Mode, query.StartDate, query.EndDate, data.Meta.Granularity, query.Days),
-			ResetHref:         trendsHref("/trends", "", "", "", data.Meta.Granularity, ""),
+			ResetHref:         "/trends",
 			ShowApply:         true,
 		},
 	}), nil

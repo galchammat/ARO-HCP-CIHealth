@@ -3,9 +3,51 @@ package controllers
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
+
+type comparisonRollupStore struct {
+	fakeProwRunsStore
+	input   []contracts.RunRecord
+	metrics []contracts.MetricDailyRecord
+}
+
+func (s *comparisonRollupStore) ListRunsByDateRange(context.Context, string, time.Time, time.Time) ([]contracts.RunRecord, error) {
+	return s.input, nil
+}
+
+func (s *comparisonRollupStore) UpsertMetricsDaily(_ context.Context, rows []contracts.MetricDailyRecord) error {
+	s.metrics = rows
+	return nil
+}
+
+func TestRollupPostGoodAndBatchUnionCountsEachRunOnce(t *testing.T) {
+	store := &comparisonRollupStore{input: []contracts.RunRecord{
+		{Environment: "dev", RunURL: "gs://test-platform-results/pr-logs/pull/batch/job/1", Failed: true},
+		{Environment: "dev", RunURL: "gs://test-platform-results/pr-logs/pull/Azure_ARO-HCP/1/job/2", PostGoodCommit: true},
+		{Environment: "dev", RunURL: "gs://test-platform-results/pr-logs/pull/Azure_ARO-HCP/2/job/3", Failed: true},
+		{Environment: "dev", RunURL: "gs://test-platform-results/pr-logs/pull/batch/job/4", PostGoodCommit: true},
+	}}
+	controller := &metricsRollupDailyController{logger: logr.Discard(), store: store, envs: []string{"dev"}}
+	if err := controller.processKey(context.Background(), "2026-03-16"); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]float64{}
+	for _, row := range store.metrics {
+		got[row.Metric] = row.Value
+	}
+	for key, want := range map[string]float64{
+		metricRunCount: 4, metricFailureCount: 2,
+		metricPostGoodRunCount: 3, metricPostGoodFailedCIInfraRunCount: 1,
+	} {
+		if got[key] != want {
+			t.Errorf("%s = %v, want %v", key, got[key], want)
+		}
+	}
+}
 
 func TestIsMetricPostGoodRunCountsBatchRuns(t *testing.T) {
 	t.Parallel()

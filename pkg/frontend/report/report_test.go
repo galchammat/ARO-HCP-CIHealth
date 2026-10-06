@@ -93,7 +93,7 @@ func TestBuildHTMLInlinesGoalDefinitionsInExecutiveTable(t *testing.T) {
 		"Env</span><span class=\"inline-tooltip align-start",
 		"Success</span><span class=\"inline-tooltip align-center",
 		"E2E success vs prev</span><span class=\"inline-tooltip align-end",
-		"95% - After last push of a PR that merges",
+		"95% - Post-good runs + Tide batches",
 		"95% - All E2E job runs",
 	} {
 		if !strings.Contains(rendered, snippet) {
@@ -162,7 +162,7 @@ func TestBuildHTMLUsesUpdatedRunOutcomeCardsAndChartLayout(t *testing.T) {
 		"Provision success",
 		"E2E success",
 		"Provisioning here means infrastructure setup before E2E tests start.",
-		"These DEV-only metrics include only runs that happened after the final push to a PR that later merged.",
+		"These PR-regression-filtered DEV metrics include runs on the final commit of a PR that later merged, plus Tide batch retests",
 		"class=\"outcome-total\">10 runs</span>",
 		"class=\"outcome-total\">4 runs</span>",
 		"Successful runs: 7 of 10 runs (70.0%)",
@@ -170,9 +170,9 @@ func TestBuildHTMLUsesUpdatedRunOutcomeCardsAndChartLayout(t *testing.T) {
 		"class=\"inline-tooltip align-center outcome-segment-wrap\" data-inline-tooltip style=\"left: 0.000000%; width: 70.000000%; background: #5f8a69;\"",
 		"class=\"outcome-segment-label\">70%</span>",
 		"role=\"button\" class=\"inline-tooltip-trigger outcome-segment seg-success\"",
-		"E2E Jobs (after last push of merged PR)</div><span class=\"inline-tooltip align-start",
-		"Success Rate (after last push of merged PR)</div><span class=\"inline-tooltip align-center",
-		"E2E success (after last push of merged PR)</div><span class=\"inline-tooltip align-end",
+		"E2E Jobs (post-good + batches)</div><span class=\"inline-tooltip align-start",
+		"Success Rate (post-good + batches)</div><span class=\"inline-tooltip align-center",
+		"E2E success (post-good + batches)</div><span class=\"inline-tooltip align-end",
 		"background: #5f8a69;",
 	}
 	for _, snippet := range required {

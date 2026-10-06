@@ -5,6 +5,28 @@ import (
 	"testing"
 )
 
+func TestTrendsGranularityHandlerUsesWindowURL(t *testing.T) {
+	t.Parallel()
+
+	for _, granularity := range []string{"daily", "weekly"} {
+		t.Run(granularity, func(t *testing.T) {
+			out := renderChromeRightSlot(ReportChromeOptions{
+				CurrentView:       ReportViewTrends,
+				TrendsGranularity: granularity,
+			})
+			// Inline handlers also search document scope, where URL is a string.
+			for _, want := range []string{
+				`onchange="var u = new window.URL(window.location.href); u.searchParams.set('granularity', this.value); window.location.assign(u.toString());"`,
+				`value="` + granularity + `" selected`,
+			} {
+				if !strings.Contains(out, want) {
+					t.Fatalf("missing %q in trends controls: %s", want, out)
+				}
+			}
+		})
+	}
+}
+
 func TestBadPRScoreAndReasonsGateOnPostGood(t *testing.T) {
 	t.Parallel()
 

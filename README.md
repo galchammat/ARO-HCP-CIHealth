@@ -62,6 +62,7 @@ Key app routes:
 - `/report?week=YYYY-MM-DD` renders the classic week-shaped report view
 - `/report?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` renders an arbitrary UTC report window
 - `/failure-patterns?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` renders the failure-patterns window view (optional `env=<name>` and `failed_at=<provision|e2e|alert|other>` filters, both also honored by `/api/failure-patterns/window`)
+- `/trends` compares raw and PR-regression-filtered overall job success for DEV `e2e-parallel` presubmits, including Tide batches. `/api/trends` returns the same read model. Select `granularity=daily|weekly` (weekly by default), independently of the date range: `mode=relative&days=N` for the last 1, 2, 5, 7, 14, 30, or 90 UTC calendar days including today, `mode=weekly|sprint` for the current week/sprint, `mode=all` or no bounds for stored history, or `start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`. Relative windows are resolved on each request, not exact trailing 24-hour periods; `mode=rolling` remains an alias for seven days. Only `env=dev` is supported.
 - `/api/review/signals/window?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` returns internal review-signal diagnostics for a UTC date window
 
 The day-scoped run history surface is:
@@ -71,7 +72,15 @@ The day-scoped run history surface is:
 
 It renders one row per run for that day, includes total Prow runtime and the selected Azure region when available, and enriches attached raw failures with inline failure-pattern matches derived from the current fact store.
 
-Tide batch runs (whose `run_url` is under `.../pull/batch/...`) are marked with a `batch` badge in place of the `post-good`/`merged PR` badges. Because every PR in a batch has already passed e2e in its own PR check, a batch failure is statistically a flake on known-good code, so batch runs are automatically counted as post-good ("after last push of merged PR") in the DEV metrics regardless of their PR-based signal.
+Tide batch runs (whose `run_url` is under `.../pull/batch/...`) are marked with a `batch` badge in place of the `post-good`/`merged PR` badges. Each PR in a batch has already passed its individual e2e-parallel check. The DEV PR-regression-filtered metrics therefore combine post-good runs (final commit of a PR that subsequently merged) and Tide batches, counting each run once. Raw metrics also include batches.
+
+Trends retains the raw-versus-filtered overall comparison and adds separate All runs (including Tide batches) and Post-good + batches diagnostic charts. Each diagnostic chart shows provision, E2E, and overall success on a common 0-100% scale, with overall emphasized. Provision success excludes Other failures and counts runs that passed provisioning even if E2E later failed; E2E success excludes provision and Other failures. Overall success includes all runs, so these rates have different denominators and are not additive. Each aligned Other-failure strip names its population and uses that population's failures and run count (lower is better). Other includes build failures, CI infrastructure failures, and unclassified failures.
+
+Hover or focus on each point or bar for its UTC period, numerator/denominator, and 95% Wilson binomial interval. Comparison points also include filtered share, percentage-point difference, and failure-lane counts; there is no separate outcomes table. The comparison retains confidence whiskers, while diagnostic intervals appear only in tooltips to avoid clutter. Weekly rates divide summed counts, not averaged daily percentages, and weeks start Monday UTC. Correlated retests/incidents limit interval interpretation. Fewer than 30 eligible runs for the particular series is labeled "low sample" as a review cue, not a swarm threshold. Hollow markers/bars identify low samples or clipped/unfinished periods. Periods with zero eligible samples or unavailable/inconsistent counts have no rate.
+
+Hover, focus, or tap the `i` buttons beside the Trends headings for metric definitions and interpretation guidance. The selected date range is shown in the top time-window selector.
+
+Individual-PR eligibility is retrospective: recent filtered values can change as PRs merge, while batches qualify immediately. The comparison is for human review of observed reliability, not proof of test effectiveness or an automated swarm decision. It reads existing daily metrics without triggering ingestion, backfill, or rollup changes.
 
 Current limitation: this is intentionally not yet a full Prow-history clone. `RunRecord` carries `run_url`, `job_name`, authoritative Prow start/completion timing, selected region, PR metadata, `failed`, and `occurred_at`, but not richer build metadata, and some raw failures can still reference runs that need run-record backfill.
 

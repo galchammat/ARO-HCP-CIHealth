@@ -231,6 +231,7 @@ const (
 	ReportViewSprint          ReportView = "sprint"
 	ReportViewFailurePatterns ReportView = "failure-patterns"
 	ReportViewRunLog          ReportView = "run-log"
+	ReportViewTrends          ReportView = "trends"
 )
 
 type ChromeLink struct {
@@ -255,6 +256,7 @@ type TimeSelectorOptions struct {
 	PreviousHref    string
 	NextHref        string
 	MenuLinks       []ChromeLink
+	RelativeLinks   []ChromeLink
 	ShowRangeInputs bool
 	RangeStartDate  string
 	RangeEndDate    string
@@ -283,6 +285,7 @@ type ReportChromeOptions struct {
 	FailurePatternsHref        string
 	ContextFailurePatternsHref string
 	RunLogHref                 string
+	TrendsHref                 string
 	FilterFormAction           string
 	TimeSelector               TimeSelectorOptions
 	Environment                EnvironmentControlOptions
@@ -290,6 +293,7 @@ type ReportChromeOptions struct {
 	JSONAPIHref                string
 	ResetHref                  string
 	ShowApply                  bool
+	TrendsGranularity          string
 }
 
 const (
@@ -484,6 +488,8 @@ func ReportChromeCSS() string {
 		"    .time-selector-option:hover { background: #f3f4f6; }",
 		"    .time-selector-option.active { border-color: #111827; background: #111827; color: #ffffff; }",
 		"    .time-selector-fields { display: grid; gap: 8px; padding-top: 4px; border-top: 1px solid #e5e7eb; }",
+		"    .time-selector-relative-options { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }",
+		"    .time-selector-relative-note { margin: 0; font-size: 12px; }",
 		"    .time-selector-fields-title { font-size: 11px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 0.04em; }",
 		"    .time-selector-fields-grid { display: grid; gap: 8px; }",
 		"    .time-selector-fields-grid label, .report-env-control { display: grid; gap: 4px; font-size: 12px; font-weight: 700; color: #4b5563; }",
@@ -529,6 +535,7 @@ func ReportChromeHTML(options ReportChromeOptions) string {
 	b.WriteString(renderReportChromeRouteLink(chromeOverviewHref(normalized), "Overview", isOverviewView(normalized.CurrentView)))
 	b.WriteString(renderReportChromeRouteLink(normalized.FailurePatternsHref, "Failure Patterns", normalized.CurrentView == ReportViewFailurePatterns))
 	b.WriteString(renderReportChromeRouteLink(normalized.RunLogHref, "Run Log", normalized.CurrentView == ReportViewRunLog))
+	b.WriteString(renderReportChromeRouteLink(normalized.TrendsHref, "Trends", normalized.CurrentView == ReportViewTrends))
 	b.WriteString("        </nav>\n")
 	b.WriteString("      </div>\n")
 	b.WriteString("      <div class=\"report-theme-slot\">")
@@ -571,6 +578,13 @@ func renderChromeTimeControls(options ReportChromeOptions) string {
 	b.WriteString("            <div class=\"time-selector-panel\">\n")
 	for _, link := range timeSelector.MenuLinks {
 		b.WriteString(renderTimeSelectorMenuLink(link))
+	}
+	if len(timeSelector.RelativeLinks) > 0 {
+		b.WriteString(`<div class="time-selector-fields"><span class="time-selector-fields-title">Relative</span><p class="time-selector-relative-note">Includes today; UTC</p><div class="time-selector-relative-options">`)
+		for _, link := range timeSelector.RelativeLinks {
+			b.WriteString(renderTimeSelectorMenuLink(link))
+		}
+		b.WriteString("</div></div>\n")
 	}
 	if timeSelector.ShowRangeInputs {
 		b.WriteString("              <div class=\"time-selector-fields\">\n")
@@ -619,7 +633,9 @@ func renderChromeTimeControls(options ReportChromeOptions) string {
 	b.WriteString("            </div>\n")
 	b.WriteString("          </details>\n")
 	b.WriteString(renderReportChromeNavButton(timeSelector.NextHref, "&gt;"))
-	b.WriteString("          <button id=\"tz-toggle\" class=\"report-context-action tz-toggle\" type=\"button\">UTC</button>\n")
+	if options.CurrentView != ReportViewTrends {
+		b.WriteString("          <button id=\"tz-toggle\" class=\"report-context-action tz-toggle\" type=\"button\">UTC</button>\n")
+	}
 	if href := strings.TrimSpace(options.ResetHref); href != "" {
 		b.WriteString(fmt.Sprintf(
 			"          <a class=\"report-context-action\" href=\"%s\">Reset</a>\n",
@@ -884,6 +900,7 @@ func normalizedReportChromeOptions(options ReportChromeOptions) ReportChromeOpti
 	options.FailurePatternsHref = strings.TrimSpace(options.FailurePatternsHref)
 	options.ContextFailurePatternsHref = strings.TrimSpace(options.ContextFailurePatternsHref)
 	options.RunLogHref = strings.TrimSpace(options.RunLogHref)
+	options.TrendsHref = strings.TrimSpace(options.TrendsHref)
 	options.FilterFormAction = strings.TrimSpace(options.FilterFormAction)
 	options.JSONAPIHref = strings.TrimSpace(options.JSONAPIHref)
 	options.ResetHref = strings.TrimSpace(options.ResetHref)
@@ -891,7 +908,7 @@ func normalizedReportChromeOptions(options ReportChromeOptions) ReportChromeOpti
 	options.FailedAt.Value = normalizeChromeFailedAtValue(options.FailedAt.Value)
 	options.TimeSelector = normalizedTimeSelectorOptions(options.TimeSelector)
 	switch options.CurrentView {
-	case ReportViewRolling, ReportViewReport, ReportViewSprint, ReportViewFailurePatterns, ReportViewRunLog:
+	case ReportViewRolling, ReportViewReport, ReportViewSprint, ReportViewFailurePatterns, ReportViewRunLog, ReportViewTrends:
 	default:
 		options.CurrentView = ""
 	}
@@ -902,6 +919,7 @@ func hasReportChromeNavigation(options ReportChromeOptions) bool {
 	return options.OverviewHref != "" ||
 		options.FailurePatternsHref != "" ||
 		options.RunLogHref != "" ||
+		options.TrendsHref != "" ||
 		options.TimeSelector.Label != ""
 }
 
@@ -1037,8 +1055,20 @@ func renderTimeSelectorMenuLink(link ChromeLink) string {
 func renderChromeRightSlot(options ReportChromeOptions) string {
 	var b strings.Builder
 	b.WriteString("      <div class=\"report-context-right\">\n")
-	b.WriteString(renderChromeFailedAtInline(options))
-	b.WriteString(renderChromeEnvironmentInline(options))
+	if options.CurrentView == ReportViewTrends {
+		b.WriteString(`<label>View <select class="report-env-select" name="granularity" aria-label="Trend granularity" onchange="var u = new window.URL(window.location.href); u.searchParams.set('granularity', this.value); window.location.assign(u.toString());">`)
+		for _, value := range []string{"daily", "weekly"} {
+			selected := ""
+			if options.TrendsGranularity == value {
+				selected = ` selected`
+			}
+			b.WriteString(fmt.Sprintf(`<option value="%s"%s>%s</option>`, value, selected, strings.ToUpper(value[:1])+value[1:]))
+		}
+		b.WriteString("</select></label><span class=\"report-env-static\">Env: DEV</span>\n")
+	} else {
+		b.WriteString(renderChromeFailedAtInline(options))
+		b.WriteString(renderChromeEnvironmentInline(options))
+	}
 	if href := strings.TrimSpace(options.JSONAPIHref); href != "" {
 		b.WriteString(fmt.Sprintf(
 			"        <a class=\"report-context-action\" href=\"%s\">View JSON API</a>\n",

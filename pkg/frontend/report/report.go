@@ -451,16 +451,16 @@ func buildHTML(
 			postGoodProvision := summarizeProvisionStepOutcomesForGoalBasis(report)
 			postGoodE2E := summarizeE2EStepOutcomesForGoalBasis(report)
 			b.WriteString("    <div class=\"cards cards-post-good cards-dev\">\n")
-			b.WriteString(cardHTML("E2E Jobs (after last push of merged PR)", postGoodTotals.TotalRuns, afterLastPushE2EJobsTooltip(), tooltipPlacementForOrderedItems(0, 4)))
-			b.WriteString(cardHTML("Success Rate (after last push of merged PR)", fmt.Sprintf("%.2f%%", successPct(postGoodTotals.TotalRuns, postGoodTotals.FailedRuns)), afterLastPushSuccessRateTooltip(), tooltipPlacementForOrderedItems(1, 4)))
+			b.WriteString(cardHTML("E2E Jobs (post-good + batches)", postGoodTotals.TotalRuns, afterLastPushE2EJobsTooltip(), tooltipPlacementForOrderedItems(0, 4)))
+			b.WriteString(cardHTML("Success Rate (post-good + batches)", fmt.Sprintf("%.2f%%", successPct(postGoodTotals.TotalRuns, postGoodTotals.FailedRuns)), afterLastPushSuccessRateTooltip(), tooltipPlacementForOrderedItems(1, 4)))
 			b.WriteString(cardHTML(
-				"Provision success (after last push of merged PR)",
+				"Provision success (post-good + batches)",
 				formatStepSuccessCardValue(postGoodProvision.TotalAttempted, postGoodProvision.Successful, postGoodProvision.Failed),
 				afterLastPushProvisionSuccessTooltip(),
 				tooltipPlacementForOrderedItems(2, 4),
 			))
 			b.WriteString(cardHTML(
-				"E2E success (after last push of merged PR)",
+				"E2E success (post-good + batches)",
 				formatStepSuccessCardValue(postGoodE2E.TotalAttempted, postGoodE2E.Successful, postGoodE2E.Failed),
 				afterLastPushE2ESuccessTooltip(),
 				tooltipPlacementForOrderedItems(3, 4),
@@ -470,11 +470,11 @@ func buildHTML(
 		b.WriteString(renderOutcomeChart("Daily Run Outcomes", outcomeChartDaysFromCounts(report.Days), report.Environment, runLogDayBasePath, "Successful runs"))
 		if report.Environment == "dev" {
 			b.WriteString(renderOutcomeChart(
-				"Daily Run Outcomes for DEV Goal Basis (after last push of merged PR)",
+				"Daily Run Outcomes for DEV Goal Basis (post-good + batches)",
 				outcomeChartDaysFromPostGood(report.Days),
 				report.Environment,
 				runLogDayBasePath,
-				"Successful runs (after last push of merged PR)",
+				"Successful runs (post-good + batches)",
 			))
 		}
 		b.WriteString("    </div>\n")
@@ -1257,11 +1257,11 @@ func joinTooltipParts(parts ...string) string {
 }
 
 func goalBasisTooltip() string {
-	return "Configured success target and run scope for this environment. INT/STG/PROD use all E2E job runs. DEV uses only runs that happened after the final push to a PR that later merged."
+	return "Configured success target and run scope for this environment. INT/STG/PROD use all E2E job runs. DEV uses post-good runs plus Tide batches: runs on the final commit of a PR that later merged, or batch retests of PRs that passed their individual e2e-parallel checks."
 }
 
 func afterLastPushMergedPRTooltip() string {
-	return "These DEV-only metrics include only runs that happened after the final push to a PR that later merged. This gives a view of the signal closest to what actually landed, rather than earlier trial runs from the same PR."
+	return "These PR-regression-filtered DEV metrics include runs on the final commit of a PR that later merged, plus Tide batch retests of PRs that passed their individual e2e-parallel checks. Each run counts once."
 }
 
 func provisionSuccessTooltip() string {
@@ -1289,7 +1289,7 @@ func afterLastPushE2ESuccessTooltip() string {
 }
 
 func executiveProvisionSuccessTooltip() string {
-	return joinTooltipParts(provisionSuccessTooltip(), "DEV rows use only runs after the final push to a PR that later merged. INT/STG/PROD show n/a because provisioning is not part of those environments.")
+	return joinTooltipParts(provisionSuccessTooltip(), "DEV rows use post-good runs plus Tide batches. INT/STG/PROD show n/a because provisioning is not part of those environments.")
 }
 
 func executiveProvisionChangeTooltip() string {
@@ -1376,9 +1376,9 @@ func goalBasisKPI(report envReport) (string, int, float64, bool) {
 	if environment == "dev" {
 		postMergeTotals := summarizePostGoodRunOutcomes(report.Days)
 		if postMergeTotals.TotalRuns <= 0 {
-			return "After last push of a PR that merges", 0, 0, false
+			return "Post-good runs + Tide batches", 0, 0, false
 		}
-		return "After last push of a PR that merges", postMergeTotals.TotalRuns, successPct(postMergeTotals.TotalRuns, postMergeTotals.FailedRuns), true
+		return "Post-good runs + Tide batches", postMergeTotals.TotalRuns, successPct(postMergeTotals.TotalRuns, postMergeTotals.FailedRuns), true
 	}
 	if report.Totals.RunCount <= 0 {
 		return "All E2E job runs", 0, 0, false

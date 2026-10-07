@@ -18,9 +18,11 @@ import (
 	readmodelreports "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/reports"
 	readmodelreview "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/review"
 	readmodelrunlog "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/runlog"
+	readmodeltrends "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/trends"
 	readmodelwindow "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/window"
 	reportweekly "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/report"
 	frontrunlog "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/runlog"
+	fronttrends "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/trends"
 	frontui "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/ui"
 	sourcelanes "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/lanes"
 
@@ -73,9 +75,11 @@ func NewHandler(opts HandlerOptions) (http.Handler, error) {
 	mux.HandleFunc("/api/run-log/day", h.handleAPIRunsDay)
 	mux.HandleFunc("/api/failure-patterns/window", h.handleAPIFailurePatterns)
 	mux.HandleFunc("/api/review/signals/window", h.handleAPIReviewSignalsWindow)
+	mux.HandleFunc("/api/trends", h.handleAPITrends)
 	mux.HandleFunc("/report", h.handleReportPage)
 	mux.HandleFunc("/run-log", h.handleRunsPage)
 	mux.HandleFunc("/failure-patterns", h.handleFailurePatternsPage)
+	mux.HandleFunc("/trends", h.handleTrendsPage)
 	mux.HandleFunc("/global", h.handleLegacyGlobalRedirect)
 	return mux, nil
 }
@@ -173,6 +177,33 @@ func (h *handler) handleRunsPage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(reportHTML))
+}
+
+func (h *handler) handleTrendsPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	reportHTML, err := h.generateTrendsPage(r.Context(), trendsQueryFromRequest(r))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(reportHTML))
+}
+
+func (h *handler) handleAPITrends(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
+		return
+	}
+	response, err := readmodeltrends.BuildTrends(r.Context(), h.service, trendsQueryFromRequest(r))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *handler) handleLegacyGlobalRedirect(w http.ResponseWriter, r *http.Request) {
@@ -323,6 +354,7 @@ func (h *handler) generateFailurePatternsReport(ctx context.Context, query readm
 			OverviewHref:        "/",
 			FailurePatternsHref: "/failure-patterns",
 			RunLogHref:          "/run-log",
+			TrendsHref:          "/trends",
 			FilterFormAction:    "/failure-patterns",
 			TimeSelector: frontui.TimeSelectorOptions{
 				Mode:            timeMode,
@@ -374,6 +406,7 @@ func (h *handler) generateDayRunHistoryPage(ctx context.Context, query readmodel
 			OverviewHref:        "/",
 			FailurePatternsHref: "/failure-patterns",
 			RunLogHref:          "/run-log",
+			TrendsHref:          "/trends",
 			FilterFormAction:    "/run-log",
 			TimeSelector: frontui.TimeSelectorOptions{
 				Mode:          frontui.TimeSelectorModeDay,
@@ -395,6 +428,235 @@ func (h *handler) generateDayRunHistoryPage(ctx context.Context, query readmodel
 			JSONAPIHref: runLogDayHref("/api/run-log/day", data.Meta.Date, "", environments, failedAt),
 		},
 	}), nil
+}
+
+func (h *handler) generateTrendsPage(ctx context.Context, query readmodeltrends.TrendsQuery) (string, error) {
+	query = query.WithDefaults()
+	data, err := readmodeltrends.BuildTrends(ctx, h.service, query)
+	if err != nil {
+		return "", err
+	}
+	timeMode := trendsTimeSelectorMode(query.Mode, data.Meta.StartDate, data.Meta.EndDate)
+	anchorDate := trendsAnchorDate(data.Meta)
+	shiftDays := trendsTimeSelectorShiftDays(timeMode, data.Meta.StartDate, data.Meta.EndDate)
+	rangeStart, rangeEnd := trendsRangeInputValues(data.Meta)
+	return fronttrends.RenderHTML(data, fronttrends.PageOptions{
+		Query: query,
+		Chrome: frontui.ReportChromeOptions{
+			CurrentView:         frontui.ReportViewTrends,
+			OverviewHref:        "/",
+			FailurePatternsHref: "/failure-patterns",
+			RunLogHref:          "/run-log",
+			TrendsHref:          "/trends",
+			FilterFormAction:    "/trends",
+			TimeSelector: frontui.TimeSelectorOptions{
+				Mode:            timeMode,
+				Label:           formatTrendsTimeSelectorLabel(timeMode, data.Meta),
+				PreviousHref:    h.shiftedTrendsHref(data.Meta.StartDate, data.Meta.EndDate, timeMode, -shiftDays, data.Meta.Granularity),
+				NextHref:        h.shiftedTrendsHref(data.Meta.StartDate, data.Meta.EndDate, timeMode, shiftDays, data.Meta.Granularity),
+				MenuLinks:       h.trendsTimeSelectorLinks(anchorDate, data.Meta.Granularity, timeMode, trendsIsAllHistory(data.Meta)),
+				RelativeLinks:   trendsRelativeTimeSelectorLinks(data.Meta.Granularity, data.Meta.RelativeDays),
+				ShowRangeInputs: true,
+				RangeStartDate:  rangeStart,
+				RangeEndDate:    rangeEnd,
+			},
+			TrendsGranularity: data.Meta.Granularity,
+			JSONAPIHref:       trendsHref("/api/trends", query.Mode, query.StartDate, query.EndDate, data.Meta.Granularity, query.Days),
+			ResetHref:         "/trends",
+			ShowApply:         true,
+		},
+	}), nil
+}
+
+// trendsRangeInputValues returns the values to prefill the custom-range date
+// inputs. For an explicit window it echoes the resolved bounds; for the
+// all-history view it falls back to the span of available data.
+func trendsRangeInputValues(meta readmodeltrends.TrendsMeta) (string, string) {
+	start := strings.TrimSpace(meta.StartDate)
+	end := strings.TrimSpace(meta.EndDate)
+	if start != "" && end != "" {
+		return start, end
+	}
+	if len(meta.Dates) > 0 {
+		return meta.Dates[0], meta.Dates[len(meta.Dates)-1]
+	}
+	return start, end
+}
+
+// trendsIsAllHistory reports whether the resolved window covers the full
+// available history (no explicit bounds).
+func trendsIsAllHistory(meta readmodeltrends.TrendsMeta) bool {
+	return strings.TrimSpace(meta.StartDate) == "" && strings.TrimSpace(meta.EndDate) == ""
+}
+
+// trendsAnchorDate picks the date used to compute the weekly/sprint preset
+// windows: the end of the current window, or today when showing all history.
+func trendsAnchorDate(meta readmodeltrends.TrendsMeta) string {
+	if anchor := timeSelectorAnchorDate(meta.StartDate, meta.EndDate); anchor != "" {
+		return anchor
+	}
+	return time.Now().UTC().Format("2006-01-02")
+}
+
+// trendsTimeSelectorMode maps the requested preset mode (falling back to the
+// resolved window shape) onto a chrome time-selector mode. All-history windows
+// have no explicit bounds and use the custom mode with an "all history" label.
+func trendsTimeSelectorMode(mode string, startDate string, endDate string) frontui.TimeSelectorMode {
+	switch readmodeltrends.NormalizeTrendsMode(mode) {
+	case readmodeltrends.TrendsModeRolling, readmodeltrends.TrendsModeRelative:
+		return frontui.TimeSelectorModeRolling
+	case readmodeltrends.TrendsModeWeekly:
+		return frontui.TimeSelectorModeWeekly
+	case readmodeltrends.TrendsModeSprint:
+		return frontui.TimeSelectorModeSprint
+	}
+	if strings.TrimSpace(startDate) == "" && strings.TrimSpace(endDate) == "" {
+		return frontui.TimeSelectorModeCustom
+	}
+	return inferredTimeSelectorMode(startDate, endDate)
+}
+
+// trendsTimeSelectorShiftDays returns the number of days the previous/next
+// controls shift the window for a given mode. Rolling and all-history windows
+// are not navigable.
+func trendsTimeSelectorShiftDays(mode frontui.TimeSelectorMode, startDate string, endDate string) int {
+	if strings.TrimSpace(startDate) == "" || strings.TrimSpace(endDate) == "" {
+		return 0
+	}
+	return timeSelectorShiftDays(mode, startDate, endDate)
+}
+
+func (h *handler) trendsTimeSelectorLinks(
+	anchorDate string,
+	granularity string,
+	activeMode frontui.TimeSelectorMode,
+	isAllHistory bool,
+) []frontui.ChromeLink {
+	links := make([]frontui.ChromeLink, 0, 4)
+	links = append(links, frontui.ChromeLink{
+		Label:  "All history",
+		Href:   trendsHref("/trends", readmodeltrends.TrendsModeAll, "", "", granularity, ""),
+		Active: isAllHistory,
+	})
+	if weekStart, weekEnd, ok := weeklyWindowContaining(anchorDate); ok {
+		links = append(links, frontui.ChromeLink{
+			Label:  "Weekly: " + formatCompactDateRange(weekStart, weekEnd),
+			Href:   trendsHref("/trends", "", weekStart, weekEnd, granularity, ""),
+			Active: activeMode == frontui.TimeSelectorModeWeekly,
+		})
+	}
+	if sprintStart, sprintEnd, ok := sprintWindowContaining(anchorDate); ok {
+		links = append(links, frontui.ChromeLink{
+			Label:  "Sprint: " + formatCompactDateRange(sprintStart, sprintEnd),
+			Href:   trendsHref("/trends", "", sprintStart, sprintEnd, granularity, ""),
+			Active: activeMode == frontui.TimeSelectorModeSprint,
+		})
+	}
+	return links
+}
+
+// shiftedTrendsHref moves an explicit date window backward/forward by the given
+// number of days. Rolling and all-history windows are not navigable.
+func (h *handler) shiftedTrendsHref(
+	startDate string,
+	endDate string,
+	mode frontui.TimeSelectorMode,
+	days int,
+	granularity string,
+) string {
+	if mode == frontui.TimeSelectorModeRolling || days == 0 {
+		return ""
+	}
+	if strings.TrimSpace(startDate) == "" || strings.TrimSpace(endDate) == "" {
+		return ""
+	}
+	targetStart, targetEnd, err := shiftDateWindow(startDate, endDate, days)
+	if err != nil {
+		return ""
+	}
+	return trendsHref("/trends", "", targetStart, targetEnd, granularity, "")
+}
+
+func relativeDaysLabel(days int) string {
+	if days == 1 {
+		return "Last 1 day"
+	}
+	return fmt.Sprintf("Last %d days", days)
+}
+
+func trendsRelativeTimeSelectorLinks(granularity string, activeDays int) []frontui.ChromeLink {
+	links := make([]frontui.ChromeLink, 0, len(readmodeltrends.RelativeDayOptions()))
+	for _, days := range readmodeltrends.RelativeDayOptions() {
+		links = append(links, frontui.ChromeLink{
+			Label:  relativeDaysLabel(days),
+			Href:   trendsHref("/trends", readmodeltrends.TrendsModeRelative, "", "", granularity, fmt.Sprint(days)),
+			Active: days == activeDays,
+		})
+	}
+	return links
+}
+
+func formatTrendsTimeSelectorLabel(mode frontui.TimeSelectorMode, meta readmodeltrends.TrendsMeta) string {
+	if trendsIsAllHistory(meta) {
+		if len(meta.Dates) > 0 {
+			return "All history: " + formatCompactDateRange(meta.Dates[0], meta.Dates[len(meta.Dates)-1])
+		}
+		return "All available history"
+	}
+	switch mode {
+	case frontui.TimeSelectorModeRolling:
+		return relativeDaysLabel(meta.RelativeDays)
+	case frontui.TimeSelectorModeWeekly:
+		return "Weekly: " + formatCompactDateRange(meta.StartDate, meta.EndDate)
+	case frontui.TimeSelectorModeSprint:
+		return "Sprint: " + formatCompactDateRange(meta.StartDate, meta.EndDate)
+	default:
+		return "Custom: " + formatCompactDateRange(meta.StartDate, meta.EndDate)
+	}
+}
+
+func trendsQueryFromRequest(r *http.Request) readmodeltrends.TrendsQuery {
+	if r == nil {
+		return readmodeltrends.TrendsQuery{}
+	}
+	return readmodeltrends.TrendsQuery{
+		Mode:         readmodeltrends.NormalizeTrendsMode(r.URL.Query().Get("mode")),
+		StartDate:    strings.TrimSpace(r.URL.Query().Get("start_date")),
+		EndDate:      strings.TrimSpace(r.URL.Query().Get("end_date")),
+		Environments: parseListQueryValues(r.URL.Query()["env"]),
+		Granularity:  strings.TrimSpace(r.URL.Query().Get("granularity")),
+		Days:         strings.TrimSpace(r.URL.Query().Get("days")),
+	}
+}
+
+func trendsHref(path string, mode string, startDate string, endDate string, granularity string, days string) string {
+	trimmedPath := strings.TrimSpace(path)
+	if trimmedPath == "" {
+		return ""
+	}
+	if !strings.HasPrefix(trimmedPath, "/") {
+		trimmedPath = "/" + trimmedPath
+	}
+	q := url.Values{}
+	if normalizedMode := readmodeltrends.NormalizeTrendsMode(mode); normalizedMode != "" {
+		q.Set("mode", normalizedMode)
+	}
+	if strings.TrimSpace(startDate) != "" {
+		q.Set("start_date", strings.TrimSpace(startDate))
+	}
+	if strings.TrimSpace(endDate) != "" {
+		q.Set("end_date", strings.TrimSpace(endDate))
+	}
+	if granularity != "" {
+		q.Set("granularity", granularity)
+	}
+	if days != "" {
+		q.Set("days", days)
+	}
+	if encoded := q.Encode(); encoded != "" {
+		return trimmedPath + "?" + encoded
+	}
+	return trimmedPath
 }
 
 func (h *handler) generateReportPage(
@@ -424,6 +686,7 @@ func (h *handler) generateReportPage(
 		FailurePatternsHref:        "/failure-patterns",
 		ContextFailurePatternsHref: failurePatternsHref("/failure-patterns", "", scope.StartDate, scope.EndDate, nil, nil, failurePatternsModeQueryValue(timeMode)),
 		RunLogHref:                 "/run-log",
+		TrendsHref:                 "/trends",
 		TimeSelector: frontui.TimeSelectorOptions{
 			Mode:         timeMode,
 			Label:        formatTimeSelectorLabel(timeMode, scope.StartDate, scope.EndDate),
